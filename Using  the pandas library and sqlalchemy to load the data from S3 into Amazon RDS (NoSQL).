@@ -1,0 +1,91 @@
+import pandas as pd
+import boto3
+import json
+from sqlalchemy import create_engine
+from sqlalchemy import text
+
+# Replace the placeholders with your AWS credentials
+aws_access_key_id = "AKIARL2POH56GIHVIWK5"
+aws_secret_access_key = "WyOapAZaC9cBwZHiwiYzqrZTjkaeT1H1VuZpmFcJ"
+bucket_name = "datamigrationaws"
+folder_name = "data/"
+
+# Create an S3 client
+s3 = boto3.client('s3', aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
+
+# Initialize an empty list to store dictionaries
+data_list = []
+
+# Iterate through the objects in the specified folder in S3
+response = s3.list_objects_v2(Bucket=bucket_name, Prefix=folder_name)
+for obj in response['Contents']:
+    file_key = obj['Key']
+    response = s3.get_object(Bucket=bucket_name, Key=file_key)
+
+    try:
+        data = json.loads(response['Body'].read().decode('utf-8'))
+        data_list.append(data)
+    except Exception as e:
+        print(f"Error processing file {file_key}: {e}")
+
+# Flatten the nested structure of the JSON data
+flattened_data = []
+for data in data_list:
+    flattened_data.append({
+        'cik': data['cik'],
+        'entityType': data['entityType'],
+        'sic': data['sic'],
+        'sicDescription': data['sicDescription'],
+        'insiderTransactionForOwnerExists': data['insiderTransactionForOwnerExists'],
+        'insiderTransactionForIssuerExists': data['insiderTransactionForIssuerExists'],
+        'name': data['name'],
+        'street1': data['addresses']['business']['street1'],
+        'street2': data['addresses']['business']['street2'],
+        'city': data['addresses']['business']['city'],
+        'stateOrCountry': data['addresses']['business']['stateOrCountry'],
+        'zipCode': data['addresses']['business']['zipCode'],
+        'stateOrCountryDescription': data['addresses']['business']['stateOrCountryDescription']
+    })
+
+# Create a DataFrame from the flattened data
+df = pd.DataFrame(flattened_data)
+
+# Replace the placeholders with your MySQL connection details
+username = "admin"
+password = "Appasatti2.0"
+host = "mydb.cactwvvrj8cu.ap-south-1.rds.amazonaws.com"
+port = "3306"
+database = "mydata"
+
+# Create the connection string
+connection_string = f"mysql+pymysql://{username}:{password}@{host}:{port}/{database}"
+
+# Create the SQLAlchemy engine
+engine = create_engine(connection_string)
+
+# Replace "table_name" with the name of the table you want to insert the data into
+table_name = "url_data"
+create_table_query = f"""
+CREATE TABLE IF NOT EXISTS {table_name} (
+    cik VARCHAR(255),
+    entityType VARCHAR(255),
+    sic VARCHAR(255),
+    sicDescription VARCHAR(255),
+    insiderTransactionForOwnerExists VARCHAR(255),
+    insiderTransactionForIssuerExists VARCHAR(255),
+    name VARCHAR(255),
+    street1 VARCHAR(255),
+    street2 VARCHAR(255),
+    city VARCHAR(255),
+    stateOrCountry VARCHAR(255),
+    zipCode VARCHAR(255),
+    stateOrCountryDescription VARCHAR(255)
+);
+"""
+
+# Execute the create table query
+with engine.connect() as connection:
+    connection.execute(text(create_table_query))
+
+# Insert the data into the MySQL database
+df.to_sql(table_name, engine, if_exists='replace', index=False)
